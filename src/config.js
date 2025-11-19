@@ -8,7 +8,7 @@ export const config = {
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
 
   // AI Key (DeepSeek via OpenRouter)
-  CAlENDAR_ALERTS_API_KEY: process.env.CAlENDAR_ALERTS_API_KEY,
+  CALENDAR_ALERTS_API_KEY: process.env.CAlENDAR_ALERTS_API_KEY,
 
   // Calendarific Key (for fetching holidays)
   calendarificKey: process.env.CALENDARIFIC_API_KEY,
@@ -17,7 +17,7 @@ export const config = {
 // Validate
 if (!config.mongoUri) throw new Error('Missing MONGO_URI');
 if (!config.calendarificKey) throw new Error('Missing CALENDARIFIC_API_KEY');
-if (!config.CAlENDAR_ALERTS_API_KEY) throw new Error('Missing CAlENDAR_ALERTS_API_KEY');
+if (!config.CALENDAR_ALERTS_API_KEY) throw new Error('Missing CAlENDAR_ALERTS_API_KEY');
 
 export const CALENDARIFIC_API_KEY = config.calendarificKey;
 export const AI_KEY = config.CAlENDAR_ALERTS_API_KEY;  // ← for AI only
