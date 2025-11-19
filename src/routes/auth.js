@@ -40,6 +40,7 @@ router.post('/register', async (req, res) => {
     const token = signToken({
       userId: user._id.toString(),
       role: user.role,
+      email: user.email,
       storeId: store._id.toString()
     });
 
@@ -76,6 +77,7 @@ router.post('/login', async (req, res) => {
     const token = signToken({
       userId: user._id.toString(),
       role: user.role,
+      email: user.email,
       storeId: user.storeIds[0].toString()
     });
 
