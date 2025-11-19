@@ -8,7 +8,7 @@ export const config = {
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
 
   // AI Key (DeepSeek via OpenRouter)
-  CALENDAR_ALERTS_API_KEY: process.env.CAlENDAR_ALERTS_API_KEY,
+  CALENDAR_ALERTS_API_KEY: process.env.CALENDAR_ALERTS_API_KEY,
 
   // Calendarific Key (for fetching holidays)
   calendarificKey: process.env.CALENDARIFIC_API_KEY,
