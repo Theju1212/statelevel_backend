@@ -123,19 +123,19 @@ Add screenshots of working API results if needed.
 ## 📸 Screenshots
 
 ### Architecture
-![Architecture](./docs/images/image1.jpg)
+![Architecture](./docs/images/image1.png)
 
 ### Technical Approach
-![Technical Approach](./docs/images/image2.jpg)
+![Technical Approach](./docs/images/image2.png)
 
 ### Feasibility & Viability
-![Feasibility](./docs/images/image3.jpg)
+![Feasibility](./docs/images/image3.png)
 
 ### AI Integration
-![AI Integration](./docs/images/image4.jpg)
+![AI Integration](./docs/images/image4.png)
 
 ### Impacts & Benefits
-![Benefits](./docs/images/image5.jpg)
+![Benefits](./docs/images/image5.png)
 
 
 📌 License
