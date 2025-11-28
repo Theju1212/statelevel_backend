@@ -1,3 +1,4 @@
+// server/routes/auth.js
 import express from 'express';
 import crypto from 'crypto';
 import User from '../models/User.js';
@@ -8,7 +9,7 @@ import { sendEmail } from '../utils/sendEmail.js';
 const router = express.Router();
 
 /* ------------------------------------------------------------------
- 🧾 REGISTER USER — creates account + default store
+    REGISTER USER — creates account + default store
 ------------------------------------------------------------------ */
 router.post('/register', async (req, res) => {
   try {
@@ -59,7 +60,7 @@ router.post('/register', async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
- 🔐 LOGIN USER (FIXED & MATCHES FRONTEND FORMAT)
+    LOGIN USER (PasswordHash-based)
 ------------------------------------------------------------------ */
 router.post('/login', async (req, res) => {
   try {
@@ -87,7 +88,6 @@ router.post('/login', async (req, res) => {
       storeId: primaryStoreId
     });
 
-    // 🔥 FIXED: RETURN SAME STRUCTURE AS REGISTER
     res.json({
       token,
       user: {
@@ -106,7 +106,7 @@ router.post('/login', async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
- 📩 FORGOT PASSWORD
+    FORGOT PASSWORD
 ------------------------------------------------------------------ */
 router.post('/forgot-password', async (req, res) => {
   try {
@@ -121,7 +121,7 @@ router.post('/forgot-password', async (req, res) => {
     const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
 
     user.resetPasswordToken = resetTokenHash;
-    user.resetPasswordExpires = Date.now() + 60 * 60 * 1000; 
+    user.resetPasswordExpires = Date.now() + 60 * 60 * 1000;
     await user.save();
 
     const resetURL = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password/${resetToken}`;
@@ -136,7 +136,7 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
- 🔄 RESET PASSWORD
+    RESET PASSWORD
 ------------------------------------------------------------------ */
 router.post('/reset-password/:token', async (req, res) => {
   try {
@@ -165,7 +165,7 @@ router.post('/reset-password/:token', async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
- 🔵 GOOGLE AUTH
+    GOOGLE AUTH
 ------------------------------------------------------------------ */
 router.post('/google', async (req, res) => {
   try {
