@@ -59,7 +59,7 @@ router.post('/register', async (req, res) => {
 });
 
 /* ------------------------------------------------------------------
- 🔐 LOGIN USER
+ 🔐 LOGIN USER (FIXED & MATCHES FRONTEND FORMAT)
 ------------------------------------------------------------------ */
 router.post('/login', async (req, res) => {
   try {
@@ -78,17 +78,25 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ message: 'No store linked to user' });
     }
 
+    const primaryStoreId = user.storeIds[0].toString();
+
     const token = signToken({
       userId: user._id.toString(),
       role: user.role,
       email: user.email,
-      storeId: user.storeIds[0].toString()
+      storeId: primaryStoreId
     });
 
+    // 🔥 FIXED: RETURN SAME STRUCTURE AS REGISTER
     res.json({
       token,
-      user: { id: user._id, email: user.email, name: user.name },
-      storeId: user.storeIds[0].toString()
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        storeId: primaryStoreId
+      }
     });
 
   } catch (err) {
