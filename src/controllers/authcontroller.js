@@ -41,14 +41,17 @@ exports.loginUser = async (req, res) => {
   try {
     const { email, phone, password } = req.body;
 
-    const user = await User.findOne(email ? { email } : { phone }).select('+password');
+    // ✅ FIX #1 — select passwordHash (NOT password)
+    const user = await User.findOne(email ? { email } : { phone }).select('+passwordHash');
     if (!user) return res.status(400).json({ message: 'User not found' });
 
+    // ✅ FIX #2 — compare with passwordHash (your model already uses this)
     const valid = await user.comparePassword(password);
     if (!valid) return res.status(400).json({ message: 'Invalid credentials' });
 
-  const token = generateToken(user);
-   res.json({ user, token });
+    const token = generateToken(user);
+    res.json({ user, token });
+
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -71,7 +74,6 @@ exports.forgotPassword = async (req, res) => {
     const resetToken = user.generatePasswordReset();
     await user.save();
 
-    // ✅ Use frontend URL if available
     const frontendUrl = (process.env.FRONTEND_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
     const resetURL = `${frontendUrl}/reset-password/${resetToken}`;
 
@@ -91,7 +93,7 @@ exports.resetPassword = async (req, res) => {
     const user = await User.findOne({
       resetPasswordToken: tokenHash,
       resetPasswordExpires: { $gt: Date.now() },
-    }).select('+password');
+    }).select('+passwordHash');
 
     if (!user) return res.status(400).json({ message: 'Invalid or expired token' });
 
@@ -105,14 +107,6 @@ exports.resetPassword = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
-
-/*
-// 📌 Send OTP (phone reset) — SKIPPED
-exports.sendOTP = async (req, res) => { ... };
-
-// 📌 Verify OTP and reset password — SKIPPED
-exports.verifyOTPAndReset = async (req, res) => { ... };
-*/
 
 // 📌 Google OAuth
 exports.googleAuth = async (req, res) => {
@@ -135,7 +129,7 @@ exports.googleAuth = async (req, res) => {
       await user.save();
     }
 
-   const token = generateToken(user);
+    const token = generateToken(user);
     res.json({ user, token });
   } catch (err) {
     console.error('googleAuth error:', err);
