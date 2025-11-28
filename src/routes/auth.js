@@ -1,4 +1,3 @@
-// server/routes/auth.js
 import express from 'express';
 import crypto from 'crypto';
 import User from '../models/User.js';
@@ -8,32 +7,33 @@ import { sendEmail } from '../utils/sendEmail.js';
 
 const router = express.Router();
 
-/* ------------------------------------------------------------------
-    REGISTER USER — creates account + default store
------------------------------------------------------------------- */
+/* -----------------------------------------------------------
+   🧾 REGISTER USER — owner + store creation
+----------------------------------------------------------- */
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password, storeName } = req.body;
+    const { name, email, phone, password, storeName } = req.body;
 
     if (!email || !password || !storeName) {
       return res.status(400).json({ message: 'email, password, storeName required' });
     }
 
     const existing = await User.findOne({ email });
-    if (existing) return res.status(400).json({ message: 'user exists' });
+    if (existing) return res.status(400).json({ message: 'User already exists' });
 
-    const pwHash = await hashPassword(password);
+    const passwordHash = await hashPassword(password);
 
     const user = await User.create({
       name,
       email,
-      passwordHash: pwHash,
+      phone,
+      passwordHash,
       role: 'owner',
       storeIds: []
     });
 
     const store = await Store.create({
-      name: storeName || `${name}'s store`,
+      name: storeName,
       ownerId: user._id
     });
 
@@ -49,129 +49,126 @@ router.post('/register', async (req, res) => {
 
     res.json({
       token,
-      user: { id: user._id, email: user.email, name: user.name },
-      store: { id: store._id, name: store.name }
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      },
+      store: {
+        id: store._id,
+        name: store.name
+      }
     });
 
   } catch (err) {
-    console.error('Register error:', err);
-    res.status(500).json({ message: 'Registration failed' });
+    console.error("Register Error:", err);
+    res.status(500).json({ message: "Registration failed" });
   }
 });
 
-/* ------------------------------------------------------------------
-    LOGIN USER (PasswordHash-based)
------------------------------------------------------------------- */
+/* -----------------------------------------------------------
+   🔐 LOGIN USER — FIXED
+----------------------------------------------------------- */
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    if (!email || !password)
-      return res.status(400).json({ message: 'email and password required' });
-
     const user = await User.findOne({ email }).select('+passwordHash');
-    if (!user) return res.status(400).json({ message: 'invalid credentials' });
+    if (!user) return res.status(400).json({ message: 'Invalid credentials' });
 
-    const ok = await comparePassword(password, user.passwordHash);
-    if (!ok) return res.status(400).json({ message: 'invalid credentials' });
+    const valid = await comparePassword(password, user.passwordHash);
+    if (!valid) return res.status(400).json({ message: 'Invalid credentials' });
 
-    if (!user.storeIds?.length) {
-      return res.status(400).json({ message: 'No store linked to user' });
-    }
-
-    const primaryStoreId = user.storeIds[0].toString();
+    const storeId = user.storeIds[0]?.toString();
 
     const token = signToken({
       userId: user._id.toString(),
       role: user.role,
       email: user.email,
-      storeId: primaryStoreId
+      storeId
     });
 
     res.json({
       token,
       user: {
         id: user._id,
-        email: user.email,
         name: user.name,
+        email: user.email,
         role: user.role,
-        storeId: primaryStoreId
+        storeId
       }
     });
 
   } catch (err) {
-    console.error('Login error:', err);
-    res.status(500).json({ message: 'Login failed' });
+    console.error("Login Error:", err);
+    res.status(500).json({ message: "Login failed" });
   }
 });
 
-/* ------------------------------------------------------------------
-    FORGOT PASSWORD
------------------------------------------------------------------- */
+/* -----------------------------------------------------------
+   📩 FORGOT PASSWORD
+----------------------------------------------------------- */
 router.post('/forgot-password', async (req, res) => {
   try {
     const { email } = req.body;
 
-    if (!email) return res.status(400).json({ message: 'Email required' });
-
     const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: 'No user with this email' });
+    if (!user) return res.status(400).json({ message: "No user with this email" });
 
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const resetHash = crypto.createHash("sha256").update(resetToken).digest("hex");
 
-    user.resetPasswordToken = resetTokenHash;
+    user.resetPasswordToken = resetHash;
     user.resetPasswordExpires = Date.now() + 60 * 60 * 1000;
     await user.save();
 
-    const resetURL = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/reset-password/${resetToken}`;
-    await sendEmail(user.email, 'Password Reset', `Reset your password: ${resetURL}`);
+    const resetURL = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
+    await sendEmail(email, "Password Reset", `Reset your password: ${resetURL}`);
 
-    res.json({ message: 'Reset email sent' });
+    res.json({ message: "Reset email sent" });
 
   } catch (err) {
-    console.error('Forgot password error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Forgot Password Error:", err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-/* ------------------------------------------------------------------
-    RESET PASSWORD
------------------------------------------------------------------- */
+/* -----------------------------------------------------------
+   🔄 RESET PASSWORD
+----------------------------------------------------------- */
 router.post('/reset-password/:token', async (req, res) => {
   try {
-    const tokenHash = crypto.createHash('sha256')
-      .update(req.params.token)
-      .digest('hex');
+    const hash = crypto.createHash("sha256").update(req.params.token).digest("hex");
 
     const user = await User.findOne({
-      resetPasswordToken: tokenHash,
+      resetPasswordToken: hash,
       resetPasswordExpires: { $gt: Date.now() }
     });
 
-    if (!user) return res.status(400).json({ message: 'Invalid or expired token' });
+    if (!user) return res.status(400).json({ message: "Invalid or expired token" });
 
     user.passwordHash = await hashPassword(req.body.password);
     user.resetPasswordToken = null;
     user.resetPasswordExpires = null;
     await user.save();
 
-    res.json({ message: 'Password reset successful' });
+    res.json({ message: "Password reset successful" });
 
   } catch (err) {
-    console.error('Reset password error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Reset Error:", err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
-/* ------------------------------------------------------------------
-    GOOGLE AUTH
------------------------------------------------------------------- */
-router.post('/google', async (req, res) => {
+/* -----------------------------------------------------------
+   🔵 GOOGLE LOGIN
+----------------------------------------------------------- */
+router.post("/google", async (req, res) => {
   try {
     const { googleId, email, name } = req.body;
 
-    if (!email) return res.status(400).json({ message: 'Missing Google email' });
+    if (!email) return res.status(400).json({ message: "Missing Google email" });
 
     let user = await User.findOne({ email });
 
@@ -179,8 +176,9 @@ router.post('/google', async (req, res) => {
       user = await User.create({
         name,
         email,
-        passwordHash: '',
-        role: 'owner',
+        googleId,
+        passwordHash: "",
+        role: "owner",
         storeIds: []
       });
 
@@ -196,14 +194,14 @@ router.post('/google', async (req, res) => {
     const token = signToken({
       userId: user._id.toString(),
       role: user.role,
-      storeId: user.storeIds[0]?.toString() || ''
+      storeId: user.storeIds[0]?.toString()
     });
 
     res.json({ token, user });
 
   } catch (err) {
-    console.error('Google auth error:', err);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Google Auth Error:", err);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
