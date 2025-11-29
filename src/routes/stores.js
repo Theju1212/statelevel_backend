@@ -5,16 +5,45 @@ import { generateAndSendAlerts } from "../utils/alertService.js";
 
 const router = express.Router();
 
-// ⭐ Use your REAL store ID (hardcoded)
+// STATIC STORE ID (because you have only one store)
 const storeId = "692a8bf64bbfacf239449732";
 
 /* =========================================================
-   🧠 GET STORE SETTINGS
+   🧩 GET STORE SETTINGS
    ========================================================= */
 router.get("/settings", async (req, res) => {
   try {
-    const store = await Store.findById(storeId);
-    res.json({ settings: store?.settings || {} });
+    let store = await Store.findById(storeId);
+
+    // If store or settings missing, create defaults
+    if (!store) {
+      store = await Store.findByIdAndUpdate(
+        storeId,
+        { $set: { 
+            "settings.autoRefill": false,
+            "settings.notificationEmail": "",
+            "settings.notificationPhone": "",
+            "settings.lastAlertCopy": "",
+            "settings.lastAlertDate": null
+        }},
+        { new: true, upsert: true }
+      );
+    }
+
+    // Ensure missing fields are auto-created
+    const defaults = {
+      autoRefill: false,
+      notificationEmail: "",
+      notificationPhone: "",
+      lastAlertCopy: "",
+      lastAlertDate: null,
+    };
+
+    store.settings = { ...defaults, ...store.settings };
+
+    await store.save();
+
+    res.json({ settings: store.settings });
   } catch (err) {
     console.error("❌ Error loading settings:", err);
     res.status(500).json({ error: "Failed to load settings" });
@@ -22,23 +51,22 @@ router.get("/settings", async (req, res) => {
 });
 
 /* =========================================================
-   🧠 UPDATE STORE SETTINGS (EMAIL SAVES HERE)
+   🧩 UPDATE STORE SETTINGS
    ========================================================= */
 router.put("/settings", async (req, res) => {
   try {
     const { autoRefill, notificationEmail, notificationPhone } = req.body;
 
     const update = {
-      "settings.autoRefill": autoRefill,
-      "settings.notificationEmail": notificationEmail,
-      "settings.notificationPhone": notificationPhone,
+      "settings.autoRefill": autoRefill ?? false,
+      "settings.notificationEmail": notificationEmail ?? "",
+      "settings.notificationPhone": notificationPhone ?? "",
     };
 
-    // ⭐ FIX: Always update the REAL store
     const store = await Store.findByIdAndUpdate(
       storeId,
       { $set: update },
-      { new: true }
+      { new: true, upsert: true }
     );
 
     res.json({ success: true, settings: store.settings });
@@ -49,11 +77,12 @@ router.put("/settings", async (req, res) => {
 });
 
 /* =========================================================
-   🧠 GET LAST EMAIL ALERT COPY (Preview)
+   🧩 GET LATEST ALERT
    ========================================================= */
 router.get("/alerts", async (req, res) => {
   try {
     const store = await Store.findById(storeId);
+
     const settings = store?.settings || {};
 
     res.json({
@@ -67,7 +96,7 @@ router.get("/alerts", async (req, res) => {
 });
 
 /* =========================================================
-   🧪 MANUAL ALERT TRIGGER
+   🧪 MANUAL TEST ALERT (SEND EMAIL NOW)
    ========================================================= */
 router.get("/test-alerts", async (req, res) => {
   try {
