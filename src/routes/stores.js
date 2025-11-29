@@ -1,13 +1,18 @@
+// routes/stores.js
 import express from "express";
 import Store from "../models/Store.js";
 import { generateAndSendAlerts } from "../utils/alertService.js";
 
 const router = express.Router();
 
-/* GET STORE SETTINGS */
+// ⭐ Use your REAL store ID (hardcoded)
+const storeId = "692a8bf64bbfacf239449732";
+
+/* =========================================================
+   🧠 GET STORE SETTINGS
+   ========================================================= */
 router.get("/settings", async (req, res) => {
   try {
-    const storeId = req.user.storeId;
     const store = await Store.findById(storeId);
     res.json({ settings: store?.settings || {} });
   } catch (err) {
@@ -16,10 +21,11 @@ router.get("/settings", async (req, res) => {
   }
 });
 
-/* UPDATE STORE SETTINGS */
+/* =========================================================
+   🧠 UPDATE STORE SETTINGS (EMAIL SAVES HERE)
+   ========================================================= */
 router.put("/settings", async (req, res) => {
   try {
-    const storeId = req.user.storeId;
     const { autoRefill, notificationEmail, notificationPhone } = req.body;
 
     const update = {
@@ -28,6 +34,7 @@ router.put("/settings", async (req, res) => {
       "settings.notificationPhone": notificationPhone,
     };
 
+    // ⭐ FIX: Always update the REAL store
     const store = await Store.findByIdAndUpdate(
       storeId,
       { $set: update },
@@ -41,13 +48,14 @@ router.put("/settings", async (req, res) => {
   }
 });
 
-/* GET LATEST ALERT COPY */
+/* =========================================================
+   🧠 GET LAST EMAIL ALERT COPY (Preview)
+   ========================================================= */
 router.get("/alerts", async (req, res) => {
   try {
-    const storeId = req.user.storeId;
     const store = await Store.findById(storeId);
-
     const settings = store?.settings || {};
+
     res.json({
       lastAlertCopy: settings.lastAlertCopy || "",
       lastAlertDate: settings.lastAlertDate || null,
@@ -58,7 +66,9 @@ router.get("/alerts", async (req, res) => {
   }
 });
 
-/* MANUAL TEST ALERT */
+/* =========================================================
+   🧪 MANUAL ALERT TRIGGER
+   ========================================================= */
 router.get("/test-alerts", async (req, res) => {
   try {
     await generateAndSendAlerts();
