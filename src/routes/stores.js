@@ -1,17 +1,14 @@
-// routes/stores.js
 import express from "express";
 import Store from "../models/Store.js";
+import { generateAndSendAlerts } from "../utils/alertService.js";
 
 const router = express.Router();
 
-/* =========================================================
-   🧠 STORE SETTINGS ROUTES
-   ========================================================= */
-
-// 🧩 Get Store Settings
+/* GET STORE SETTINGS */
 router.get("/settings", async (req, res) => {
   try {
-    const store = await Store.findOne({});
+    const storeId = req.user.storeId;
+    const store = await Store.findById(storeId);
     res.json({ settings: store?.settings || {} });
   } catch (err) {
     console.error("❌ Error loading settings:", err);
@@ -19,9 +16,10 @@ router.get("/settings", async (req, res) => {
   }
 });
 
-// 🧩 Update Store Settings
+/* UPDATE STORE SETTINGS */
 router.put("/settings", async (req, res) => {
   try {
+    const storeId = req.user.storeId;
     const { autoRefill, notificationEmail, notificationPhone } = req.body;
 
     const update = {
@@ -30,7 +28,12 @@ router.put("/settings", async (req, res) => {
       "settings.notificationPhone": notificationPhone,
     };
 
-    const store = await Store.findOneAndUpdate({}, { $set: update }, { new: true, upsert: true });
+    const store = await Store.findByIdAndUpdate(
+      storeId,
+      { $set: update },
+      { new: true }
+    );
+
     res.json({ success: true, settings: store.settings });
   } catch (err) {
     console.error("❌ Failed to update settings:", err);
@@ -38,14 +41,12 @@ router.put("/settings", async (req, res) => {
   }
 });
 
-/* =========================================================
-   🧠 ALERT COPY ROUTES (for Settings page + cron updates)
-   ========================================================= */
-
-// 🧠 Fetch latest email alert copy
+/* GET LATEST ALERT COPY */
 router.get("/alerts", async (req, res) => {
   try {
-    const store = await Store.findOne({});
+    const storeId = req.user.storeId;
+    const store = await Store.findById(storeId);
+
     const settings = store?.settings || {};
     res.json({
       lastAlertCopy: settings.lastAlertCopy || "",
@@ -57,13 +58,7 @@ router.get("/alerts", async (req, res) => {
   }
 });
 
-/* =========================================================
-   🧪 TEST ALERT MANUAL TRIGGER (optional)
-   ========================================================= */
-
-// 🧪 Manually trigger daily alert email (for testing)
-import { generateAndSendAlerts } from "../utils/alertService.js"; // make sure this function exists
-
+/* MANUAL TEST ALERT */
 router.get("/test-alerts", async (req, res) => {
   try {
     await generateAndSendAlerts();
