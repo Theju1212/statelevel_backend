@@ -140,7 +140,7 @@ Max discount: ${userDiscountConfig?.maxDiscount || 50}%
 
     // === Better model: Gemini Flash FREE (stable JSON) ===
     const payload = {
-      model: "google/gemini-flash-1.5-exp:free",
+      model: "nvidia/nemotron-nano-9b-v2:free",
       messages: [
         { role: "system", content: "You are a JSON API. Return ONLY valid JSON. Respond with well-formed JSON object." },
         { role: "user", content: prompt }
@@ -300,12 +300,13 @@ Give 8–12 items with quantities.
 `.trim();
 
     // prefer Gemini Flash free, fallback to other free models
-    const models = [
-      "google/gemini-flash-1.5-exp:free",
-      "meta-llama/llama-3.2-1b-instruct:free",
-      "mistralai/mistral-7b-instruct:free",
-      "openchat/openchat-3.5:free"
-    ];
+  const models = [
+  "nvidia/nemotron-nano-9b-v2:free",
+  "meta-llama/llama-3.2-1b-instruct:free",
+  "mistralai/mistral-7b-instruct:free",
+  "openchat/openchat-3.5:free"
+];
+
 
     for (const model of models) {
       try {

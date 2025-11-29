@@ -21,7 +21,8 @@ export async function callGeminiAPI(userQuery, inventoryData) {
     }
     
     // ⭐ UPDATED MODEL (DeepSeek → Gemini Flash Free)
-    const model = 'google/gemini-flash-1.5-exp:free';
+    const model = 'nvidia/nemotron-nano-9b-v2:free';
+
 
     const apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
 
