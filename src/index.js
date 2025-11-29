@@ -16,7 +16,7 @@ import aiRoutes from "./routes/aiRoutes.js";
 import chatRoutes from "./routes/chat.js";
 import calendarRouter from "./routes/calendar.js";
 
-import { generateAndSendAlerts } from "./alerts/alertService.js";  // ✅ FIXED
+import { generateAndSendAlerts } from "./utils/alertService.js";  // ✅ FIXED
 
 dotenv.config();
 
