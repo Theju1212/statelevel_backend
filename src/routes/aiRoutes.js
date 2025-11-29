@@ -1,3 +1,4 @@
+// src/routes/aiRoutes.js
 import express from 'express';
 import axios from 'axios';
 import Item from '../models/Item.js';
@@ -7,6 +8,43 @@ import { AI_KEY } from '../config.js';
 
 const router = express.Router();
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+// small helper for exponential backoff sleeps
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
+// normalize item name for matching
+const normalize = (s = '') => String(s).trim().toLowerCase();
+
+// === Helper: call OpenRouter with retries ===
+async function callOpenRouter(payload, maxRetries = 2, initialDelay = 800) {
+  let attempt = 0;
+  let delay = initialDelay;
+  while (attempt <= maxRetries) {
+    try {
+      const resp = await axios.post(OPENROUTER_API_URL, payload, {
+        headers: {
+          Authorization: `Bearer ${AI_KEY}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "http://localhost:3000",
+          "X-Title": "AI Mart Inventory"
+        },
+        timeout: 60000
+      });
+      return resp.data;
+    } catch (err) {
+      attempt++;
+      const status = err.response?.status;
+      console.warn(`OpenRouter attempt ${attempt} failed:`, status || err.message);
+      // retry on 429 or 5xx or network errors
+      if (attempt > maxRetries || (status && status < 500 && status !== 429)) {
+        throw err;
+      }
+      await sleep(delay);
+      delay *= 2;
+    }
+  }
+  throw new Error('OpenRouter retries exhausted');
+}
 
 // ========================================
 // 1. LOW STOCK + EXPIRY + VELOCITY SUGGESTIONS (JSON-FORCED)
@@ -56,7 +94,7 @@ router.post('/suggestions', async (req, res) => {
         }
       }
 
-      const itemSales = validSales.filter(s => 
+      const itemSales = validSales.filter(s =>
         s.itemId._id.toString() === item._id.toString()
       );
       const salesVelocity = itemSales.length / 30;
@@ -77,13 +115,13 @@ router.post('/suggestions', async (req, res) => {
       });
     }
 
-    // 4. Prepare AI prompt
+    // 4. Prepare AI prompt (compact, clear)
     const itemList = alertsData.map(d => {
-      return `Item: ${d.item.name} | Stock: ${d.item.rackStock}/${d.item.threshold} | Alerts: ${d.alerts.join(', ')} | Sales: ${d.salesVelocity}/day | Sold: ${d.totalSales}`;
+      return `Item: ${d.item.name} | Stock: ${d.item.rackStock}/${d.item.threshold} | Alerts: ${d.alerts.join(', ')} | SalesPerDay: ${d.salesVelocity} | SoldTotal: ${d.totalSales}`;
     }).join('\n');
 
     const prompt = `
-You are a retail-inventory AI. Return **ONLY** this JSON (no markdown, no extra text):
+You are a retail-inventory AI. Return ONLY valid JSON, no markdown or extra text.
 
 {
   "discountSuggestions": [
@@ -94,57 +132,88 @@ You are a retail-inventory AI. Return **ONLY** this JSON (no markdown, no extra 
 
 Data:
 ${itemList}
+
 Max discount: ${userDiscountConfig?.maxDiscount || 50}%
-`;
+`.trim();
 
     if (!AI_KEY) return res.status(500).json({ error: "AI key missing" });
 
-    // === CALL OpenRouter with JSON-FORCED MODEL ===
-    const response = await axios.post(
-      OPENROUTER_API_URL,
-      {
-        model: "deepseek/deepseek-r1-0528-qwen3-8b:free",  // JSON-GUARANTEED
-        messages: [
-          { role: "system", content: "You are a JSON API. Return ONLY valid JSON." },
-          { role: "user",   content: prompt }
-        ],
-        temperature: 0.1,
-        max_tokens: 800,
-        response_format: { type: "json_object" }
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${AI_KEY}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "http://localhost:3000",
-          "X-Title": "AI Mart Inventory"
-        },
-        timeout: 60000
+    // === Better model: Gemini Flash FREE (stable JSON) ===
+    const payload = {
+      model: "google/gemini-flash-1.5-exp:free",
+      messages: [
+        { role: "system", content: "You are a JSON API. Return ONLY valid JSON. Respond with well-formed JSON object." },
+        { role: "user", content: prompt }
+      ],
+      temperature: 0.05,
+      max_tokens: 700,
+      // openrouter supports "response_format", keep it when available to enforce JSON
+      response_format: { type: "json_object" }
+    };
+
+    // Call OpenRouter with retries
+    let responseData;
+    try {
+      responseData = await callOpenRouter(payload, 2, 800);
+    } catch (err) {
+      console.error("OpenRouter primary call failed:", err.response?.data || err.message);
+      // fallback: try the same payload without response_format (some providers ignore)
+      try {
+        const fallbackPayload = { ...payload };
+        delete fallbackPayload.response_format;
+        responseData = await callOpenRouter(fallbackPayload, 1, 1000);
+      } catch (err2) {
+        console.error("OpenRouter fallback failed:", err2.response?.data || err2.message);
+        // graceful fallback: send computed alerts only (no AI)
+        const alerts = alertsData.map(d => {
+          const item = d.item;
+          const messages = [];
+          if (d.alerts.includes('LOW_STOCK')) messages.push(`${item.name}: Low stock (${item.rackStock}/${item.threshold})`);
+          if (d.alerts.includes('EXPIRED')) messages.push(`${item.name}: EXPIRED!`);
+          if (d.alerts.includes('EXPIRING_SOON')) {
+            const days = Math.floor((new Date(item.expiryDate) - today) / 86400000);
+            messages.push(`${item.name}: Expiring in ${days} days`);
+          }
+          if (d.alerts.includes('LOW_VELOCITY')) messages.push(`${item.name}: Slow sales (${d.salesVelocity}/day)`);
+          return { itemName: item.name, message: messages.join('; '), itemId: item._id };
+        });
+
+        return res.status(502).json({
+          error: "AI provider failed. Returning computed alerts without AI suggestions.",
+          alerts,
+          discountSuggestions: [],
+          insights: "AI unavailable — using local heuristics."
+        });
       }
-    );
+    }
 
-    const raw = response.data?.choices?.[0]?.message?.content?.trim() ?? "";
-    console.log("AI raw:", raw);
+    // Extract raw content
+    const raw = responseData?.choices?.[0]?.message?.content?.trim?.() ?? "";
+    console.log("AI raw:", raw && raw.length > 200 ? `${raw.slice(0,200)}...` : raw);
 
+    // parse JSON safely
     let aiJson;
     try {
-      aiJson = JSON.parse(raw);
+      // If response_format worked OpenRouter returns object already
+      if (responseData?.choices?.[0]?.message?.content_object) {
+        aiJson = responseData.choices[0].message.content_object;
+      } else {
+        aiJson = JSON.parse(raw);
+      }
       if (!Array.isArray(aiJson.discountSuggestions) || typeof aiJson.insights !== "string") {
-        throw new Error("Missing required fields");
+        throw new Error("Missing fields in AI response");
       }
     } catch (e) {
-      console.warn("AI non-JSON – using fallback parser:", raw);
-      const fallback = {
-        discountSuggestions: [],
-        insights: "AI response was not JSON – using default values."
-      };
+      console.warn("AI non-JSON – using fallback parser (best-effort):", e.message);
+      const fallback = { discountSuggestions: [], insights: "AI response not JSON — fallback insights." };
+      // naive attempt to extract item names
       raw.split('\n').forEach(line => {
         const m = line.match(/Item[:\s]*([^\|]+)/i);
         if (m) {
           fallback.discountSuggestions.push({
             itemName: m[1].trim(),
-            suggestedPercent: 15,
-            applyQty: 5,
+            suggestedPercent: userDiscountConfig?.defaultDiscount ?? 10,
+            applyQty: 1,
             reason: "AI parsing fallback"
           });
         }
@@ -154,8 +223,8 @@ Max discount: ${userDiscountConfig?.maxDiscount || 50}%
 
     // 5. Map AI suggestions to real items
     const discountSuggestions = (aiJson.discountSuggestions || []).map(d => {
-      const match = alertsData.find(data => 
-        data.item.name.toLowerCase() === d.itemName?.toLowerCase()
+      const match = alertsData.find(data =>
+        normalize(data.item.name) === normalize(d.itemName)
       );
       if (!match) return null;
 
@@ -210,100 +279,77 @@ Max discount: ${userDiscountConfig?.maxDiscount || 50}%
 });
 
 // ========================================
-// 2. FESTIVAL GROCERY SUGGESTIONS – MiniMax-M2 only
+// 2. FESTIVAL GROCERY SUGGESTIONS – try best FREE models
 // ========================================
 router.post('/festival-suggestions', async (req, res) => {
-  const { festivalName, daysUntil = 0 } = req.body;
-  if (!festivalName) return res.status(400).json({ error: 'Festival name required' });
+  try {
+    const { festivalName, daysUntil = 0 } = req.body;
+    if (!festivalName) return res.status(400).json({ error: 'Festival name required' });
 
-  console.log("AI /festival-suggestions called:", { festivalName, daysUntil });
+    console.log("AI /festival-suggestions called:", { festivalName, daysUntil });
 
-  const prompt = `
-You are a grocery AI. Return **ONLY** this JSON (no extra text, no markdown):
+    const prompt = `
+You are a grocery AI. Return ONLY this JSON object (no extra text):
 
 {
-  "suggestions": ["Rice 5 kg", "Jaggery 2 kg", "Ghee 1 L", "Milk 2 L"]
+  "suggestions": ["Rice 5 kg", "Jaggery 2 kg", "Ghee 1 L"]
 }
 
 Festival: "${festivalName}" in ${daysUntil} days.
-
-Rules:
-- Pongal: rice, jaggery, ghee, milk, coconut, sugarcane
-- Lohri: peanuts, sesame, jaggery, rewri, popcorn
-- Diwali: oil, diyas, sweets, rangoli powder, crackers
-- Republic Day: tri-color sweets, flags, tea, biscuits
-- Holi: colors, gujiya, thandai, sweets
-- Default: oil, rice, sugar, tea, biscuits
-
-Give 8–12 items with quantity.
+Give 8–12 items with quantities.
 `.trim();
 
-  const models = [
-    "google/gemini-flash-1.5-exp:free",
-    "mistralai/mistral-7b-instruct:free",
-    "meta-llama/llama-3.2-1b-instruct:free",
-    "openchat/openchat-3.5:free"
-  ];
+    // prefer Gemini Flash free, fallback to other free models
+    const models = [
+      "google/gemini-flash-1.5-exp:free",
+      "meta-llama/llama-3.2-1b-instruct:free",
+      "mistralai/mistral-7b-instruct:free",
+      "openchat/openchat-3.5:free"
+    ];
 
-  let lastError;
-  for (const model of models) {
-    try {
-      const response = await axios.post(
-        OPENROUTER_API_URL,
-        {
+    for (const model of models) {
+      try {
+        const payload = {
           model,
           messages: [{ role: "user", content: prompt }],
           temperature: 0.1,
           max_tokens: 400
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${AI_KEY}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost:3000",
-            "X-Title": "AI Mart"
-          },
-          timeout: 30000
+        };
+
+        const data = await callOpenRouter(payload, 1, 700);
+        const raw = data?.choices?.[0]?.message?.content?.trim?.() ?? "";
+        console.log(`Raw from ${model}:`, raw && raw.length > 200 ? `${raw.slice(0,200)}...` : raw);
+
+        // Extract JSON object text and parse
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error("No JSON in model output");
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed.suggestions) && parsed.suggestions.length > 0) {
+          return res.json({ suggestions: parsed.suggestions });
         }
-      );
-
-      const raw = response.data?.choices?.[0]?.message?.content?.trim() ?? "";
-      console.log(`Raw from ${model}:`, raw);
-
-      // Extract JSON
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("No JSON");
-
-      let parsed = JSON.parse(jsonMatch[0]);
-      if (Array.isArray(parsed.suggestions) && parsed.suggestions.length > 0) {
-        console.log("Success with model:", model);
-        return res.json({ suggestions: parsed.suggestions });
+      } catch (err) {
+        console.warn(`Model ${model} failed:`, err.response?.data || err.message);
+        // continue to next model
       }
-
-    } catch (err) {
-      lastError = err;
-      console.error(`Model ${model} failed:`, err.response?.status || err.message);
-      if (err.response?.status === 429) await new Promise(r => setTimeout(r, 60000));
     }
-  }
 
-  // MOCK FALLBACK
-  const mock = {
-    "Pongal": ["Rice 5 kg", "Jaggery 2 kg", "Ghee 1 L", "Milk 2 L", "Coconut 2 pcs", "Sugarcane 2 sticks"],
-    "Lohri": ["Peanuts 1 kg", "Sesame 500 g", "Jaggery 1 kg", "Rewri 500 g", "Popcorn 500 g"],
-    "Diwali": ["Oil 5 L", "Diyas 100 pcs", "Sweets 2 kg", "Rangoli 500 g", "Crackers"],
-    "Republic Day": ["Tri-color sweets", "Flags 10 pcs", "Tea 250 g", "Biscuits 1 kg"],
-    "Holi": ["Colors 100 g", "Gujiya mix", "Thandai", "Sweets 1 kg"],
-    "Ugadi": ["Jaggery 1 kg", "Raw Mango 2 kg", "Tamarind 500 g", "Neem Flowers", "Banana 12 pcs"]
-  };
-  const suggestions = mock[festivalName] || ["Rice 5 kg", "Oil 2 L", "Sugar 1 kg"];
-  console.log("Using mock fallback");
-  res.json({ suggestions });
+    // MOCK FALLBACK (deterministic)
+    const mock = {
+      "Pongal": ["Rice 5 kg", "Jaggery 2 kg", "Ghee 1 L", "Milk 2 L", "Coconut 2 pcs", "Sugarcane 2 sticks", "Turmeric 250 g", "Salt 1 kg"],
+      "Lohri": ["Peanuts 1 kg", "Sesame 500 g", "Jaggery 1 kg", "Rewri 500 g", "Popcorn 500 g", "Ghee 500 g", "Sattu 500 g", "Sugar 500 g"],
+      "Diwali": ["Oil 5 L", "Diyas 100 pcs", "Sweets 2 kg", "Rangoli 500 g", "Crackers 1 box", "Sugar 1 kg", "Flour 5 kg", "Ghee 1 L"]
+    };
+    const suggestions = mock[festivalName] || ["Rice 5 kg", "Oil 2 L", "Sugar 1 kg", "Tea 250 g", "Biscuits 500 g", "Salt 1 kg"];
+    console.log("Using mock fallback for festival-suggestions");
+    return res.json({ suggestions });
+  } catch (err) {
+    console.error("festival-suggestions error:", err.message);
+    res.status(500).json({ error: "Festival suggestions failed" });
+  }
 });
 
-
 // ========================================
-// 3. APPLY DISCOUNT
+// 3. APPLY DISCOUNT (unchanged behaviour but safe)
 // ========================================
 router.post('/apply-discount', async (req, res) => {
   try {
@@ -319,9 +365,9 @@ router.post('/apply-discount', async (req, res) => {
     item.discountQty = applyQty;
     await item.save();
 
-    res.json({ 
+    res.json({
       message: `Discount ${discountPercent}% applied to ${applyQty} units of ${item.name}`,
-      item 
+      item
     });
   } catch (err) {
     console.error("Apply discount error:", err.message);
@@ -337,10 +383,9 @@ router.get('/test', async (req, res) => {
     const response = await axios.get("https://openrouter.ai/api/v1/models", {
       headers: { Authorization: `Bearer ${AI_KEY}` }
     });
-    const yourModel = response.data.data.find(m => m.id === "qwen/qwen-2.5-7b-instruct:free");
-    
-    res.json({ 
-      status: "OpenRouter ready!", 
+    const yourModel = response.data.data.find(m => m.id === "google/gemini-flash-1.5-exp:free" || m.id === "deepseek/deepseek-r1-0528-qwen3-8b");
+    res.json({
+      status: "OpenRouter ready!",
       model: yourModel?.id || "Model not found",
       aiKeyLoaded: !!AI_KEY,
       routes: [
