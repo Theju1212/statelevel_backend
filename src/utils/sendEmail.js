@@ -1,19 +1,20 @@
-// src/utils/sendEmail.js
-import nodemailer from 'nodemailer';
+import { Resend } from "resend";
 
-export const sendEmail = async (to, subject, text) => {
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
-    to,
-    subject,
-    text,
-  });
-};
+export async function sendEmail(to, subject, html) {
+  try {
+    const data = await resend.emails.send({
+      from: process.env.NOTIFY_EMAIL_FROM,
+      to,
+      subject,
+      html
+    });
+
+    console.log("📩 Email sent:", data);
+    return data;
+  } catch (error) {
+    console.error("❌ Resend email error:", error);
+    throw error;
+  }
+}

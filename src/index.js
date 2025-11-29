@@ -70,8 +70,8 @@ app.use("/api/calendar", authMiddleware, calendarRouter);
 --------------------------------------------------------- */
 app.get("/api/test-alerts", async (req, res) => {
   try {
-    await sendAlertEmail();
-    res.json({ success: true, message: "📨 Manual alert sent & saved!" });
+    await generateAndSendAlerts();
+    res.json({ success: true, message: "Resend email sent!" });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
