@@ -77,17 +77,6 @@ app.get("/api/test-alerts", async (req, res) => {
   }
 });
 
-/* -------------------------------------------------------
-   🧪 SMTP Test
---------------------------------------------------------- */
-app.get("/api/test-smtp", async (req, res) => {
-  try {
-    await transporter.verify();
-    res.json({ success: true, message: "SMTP connected successfully!" });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
 
 /* -------------------------------------------------------
    ❤️ Health check
