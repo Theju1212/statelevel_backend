@@ -1,13 +1,23 @@
+// src/utils/alertService.js
 import Store from "../models/Store.js";
 import Item from "../models/Item.js";
 import { sendEmail } from "../utils/sendEmail.js";
 
 export async function generateAndSendAlerts() {
   try {
-    const store = await Store.findOne({});
-    const settings = store?.settings || {};
+    // ✅ FIX: Use your actual storeId (NO MORE findOne())
+    const storeId = "692a8bf64bbfacf239449732";  
+    const store = await Store.findById(storeId);
+
+    if (!store) {
+      console.log("❌ Store not found");
+      return;
+    }
+
+    const settings = store.settings || {};
     const email = settings.notificationEmail;
 
+    // ❗ This was the reason Resend email was never triggered
     if (!email) {
       console.log("⚠️ No notification email set, skipping alert");
       return;
@@ -31,8 +41,10 @@ export async function generateAndSendAlerts() {
       </ul>
     `;
 
+    // ✅ Send email using Resend
     await sendEmail(email, "🛒 AI Mart – Inventory Alerts", alertHtml);
 
+    // Save alert copy + timestamp
     store.settings.lastAlertCopy = alertHtml;
     store.settings.lastAlertDate = new Date();
     await store.save();
