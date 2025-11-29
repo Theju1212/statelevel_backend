@@ -7,19 +7,22 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET || 'dev_jwt_secret',
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
 
-  // AI Key (DeepSeek via OpenRouter)
-  CALENDAR_ALERTS_API_KEY: process.env.CALENDAR_ALERTS_API_KEY,
+  // AI Key
+  aiKey: process.env.AI_KEY,  // 👈 USE AI_KEY DIRECTLY
 
-  // Calendarific Key (for fetching holidays)
+  // Calendar Alerts Key (if different)
+  calendarAlertsKey: process.env.CALENDAR_ALERTS_API_KEY,
+
+  // Calendarific Key
   calendarificKey: process.env.CALENDARIFIC_API_KEY,
 };
 
 // Validate
 if (!config.mongoUri) throw new Error('Missing MONGO_URI');
+if (!config.aiKey) throw new Error('Missing AI_KEY');
 if (!config.calendarificKey) throw new Error('Missing CALENDARIFIC_API_KEY');
-if (!config.CALENDAR_ALERTS_API_KEY) throw new Error('Missing CALENDAR_ALERTS_API_KEY');
 
+export const AI_KEY = config.aiKey;  // <-- The Correct Export
 export const CALENDARIFIC_API_KEY = config.calendarificKey;
-export const AI_KEY = config.CALENDAR_ALERTS_API_KEY;  // ← for AI only
 
 console.log('Config loaded successfully');
