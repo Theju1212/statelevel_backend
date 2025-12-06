@@ -4,7 +4,11 @@ import axios from 'axios';
 import Item from '../models/Item.js';
 import Sale from '../models/Sale.js';
 import mongoose from 'mongoose';
-import { AI_KEY } from '../config.js';
+import { AI_KEY, GEMINI_KEY } from '../config.js';  // ⭐ IMPORTANT FIX
+
+
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
 
 const router = express.Router();
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -46,6 +50,9 @@ async function callOpenRouter(payload, maxRetries = 2, initialDelay = 800) {
   throw new Error('OpenRouter retries exhausted');
 }
 
+// ========================================
+// 1. LOW STOCK + EXPIRY + VELOCITY SUGGESTIONS (JSON-FORCED)
+// ========================================
 // ========================================
 // 1. LOW STOCK + EXPIRY + VELOCITY SUGGESTIONS (JSON-FORCED)
 // ========================================
@@ -138,91 +145,40 @@ Max discount: ${userDiscountConfig?.maxDiscount || 50}%
 
     if (!AI_KEY) return res.status(500).json({ error: "AI key missing" });
 
-    // === Better model: Gemini Flash FREE (stable JSON) ===
-    const payload = {
-      model: "nvidia/nemotron-nano-9b-v2:free",
-      messages: [
-        { role: "system", content: "You are a JSON API. Return ONLY valid JSON. Respond with well-formed JSON object." },
-        { role: "user", content: prompt }
-      ],
-      temperature: 0.05,
-      max_tokens: 700,
-      // openrouter supports "response_format", keep it when available to enforce JSON
-      response_format: { type: "json_object" }
-    };
+    // ===============================================================
+    // ⭐⭐ CHANGED BLOCK — SWITCH TO GOOGLE GEMINI OFFICIAL API ⭐⭐
+    // ===============================================================
 
-    // Call OpenRouter with retries
-    let responseData;
-    try {
-      responseData = await callOpenRouter(payload, 2, 800);
-    } catch (err) {
-      console.error("OpenRouter primary call failed:", err.response?.data || err.message);
-      // fallback: try the same payload without response_format (some providers ignore)
-      try {
-        const fallbackPayload = { ...payload };
-        delete fallbackPayload.response_format;
-        responseData = await callOpenRouter(fallbackPayload, 1, 1000);
-      } catch (err2) {
-        console.error("OpenRouter fallback failed:", err2.response?.data || err2.message);
-        // graceful fallback: send computed alerts only (no AI)
-        const alerts = alertsData.map(d => {
-          const item = d.item;
-          const messages = [];
-          if (d.alerts.includes('LOW_STOCK')) messages.push(`${item.name}: Low stock (${item.rackStock}/${item.threshold})`);
-          if (d.alerts.includes('EXPIRED')) messages.push(`${item.name}: EXPIRED!`);
-          if (d.alerts.includes('EXPIRING_SOON')) {
-            const days = Math.floor((new Date(item.expiryDate) - today) / 86400000);
-            messages.push(`${item.name}: Expiring in ${days} days`);
-          }
-          if (d.alerts.includes('LOW_VELOCITY')) messages.push(`${item.name}: Slow sales (${d.salesVelocity}/day)`);
-          return { itemName: item.name, message: messages.join('; '), itemId: item._id };
-        });
+  // ⭐ USE GEMINI_KEY IMPORTED FROM CONFIG
+const genAI = new GoogleGenerativeAI(GEMINI_KEY);
 
-        return res.status(502).json({
-          error: "AI provider failed. Returning computed alerts without AI suggestions.",
-          alerts,
-          discountSuggestions: [],
-          insights: "AI unavailable — using local heuristics."
-        });
-      }
-    }
+const model = genAI.getGenerativeModel({
+  model: "gemini-1.5-flash",
+  generationConfig: {
+    responseMimeType: "application/json"
+  }
+});
 
-    // Extract raw content
-    const raw = responseData?.choices?.[0]?.message?.content?.trim?.() ?? "";
-    console.log("AI raw:", raw && raw.length > 200 ? `${raw.slice(0,200)}...` : raw);
+const result = await model.generateContent(prompt);
 
-    // parse JSON safely
-    let aiJson;
-    try {
-      // If response_format worked OpenRouter returns object already
-      if (responseData?.choices?.[0]?.message?.content_object) {
-        aiJson = responseData.choices[0].message.content_object;
-      } else {
-        aiJson = JSON.parse(raw);
-      }
-      if (!Array.isArray(aiJson.discountSuggestions) || typeof aiJson.insights !== "string") {
-        throw new Error("Missing fields in AI response");
-      }
-    } catch (e) {
-      console.warn("AI non-JSON – using fallback parser (best-effort):", e.message);
-      const fallback = { discountSuggestions: [], insights: "AI response not JSON — fallback insights." };
-      // naive attempt to extract item names
-      raw.split('\n').forEach(line => {
-        const m = line.match(/Item[:\s]*([^\|]+)/i);
-        if (m) {
-          fallback.discountSuggestions.push({
-            itemName: m[1].trim(),
-            suggestedPercent: userDiscountConfig?.defaultDiscount ?? 10,
-            applyQty: 1,
-            reason: "AI parsing fallback"
-          });
-        }
-      });
-      aiJson = fallback;
-    }
+let responseData;
+try {
+  responseData = JSON.parse(result.response.text());
+} catch (e) {
+  console.error("Gemini JSON parse error:", e);
+  return res.status(500).json({
+    error: "Gemini returned invalid JSON",
+    raw: result.response.text()
+  });
+}
+
+    // ===============================================================
+    // ❗ REMOVED OpenRouter, callOpenRouter, fallback logic
+    // Everything else continues 100% same
+    // ===============================================================
 
     // 5. Map AI suggestions to real items
-    const discountSuggestions = (aiJson.discountSuggestions || []).map(d => {
+    const discountSuggestions = (responseData.discountSuggestions || []).map(d => {
       const match = alertsData.find(data =>
         normalize(data.item.name) === normalize(d.itemName)
       );
@@ -263,7 +219,7 @@ Max discount: ${userDiscountConfig?.maxDiscount || 50}%
     res.json({
       alerts,
       discountSuggestions,
-      insights: aiJson.insights || "AI analyzing your inventory patterns.",
+      insights: responseData.insights || "Analyzing your inventory...",
       summary: {
         totalItems: items.length,
         alertsCount: alertsData.length,
