@@ -53,6 +53,9 @@ async function callOpenRouter(payload, maxRetries = 2, initialDelay = 800) {
 // ========================================
 // 1. LOW STOCK + EXPIRY + VELOCITY SUGGESTIONS (JSON-FORCED)
 // ========================================
+// ========================================
+// 1. LOW STOCK + EXPIRY + VELOCITY SUGGESTIONS (JSON-FORCED)
+// ========================================
 router.post('/suggestions', async (req, res) => {
   try {
     const { userDiscountConfig } = req.body;
@@ -136,12 +139,14 @@ router.post('/suggestions', async (req, res) => {
 }
 Data:\n${itemList}`;
 
-    // CALL GEMINI
-   const model = genAI.getGenerativeModel({
-  model: "gemini-1.5-flash-latest",
-  generationConfig: { responseMimeType: "application/json" }
-});
+    // ⭐⭐⭐ CREATE genAI INSTANCE (you removed this accidentally)
+    const genAI = new GoogleGenerativeAI(GEMINI_KEY);
 
+    // ⭐ FIXED MODEL NAME
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash-latest",
+      generationConfig: { responseMimeType: "application/json" }
+    });
 
     const result = await model.generateContent(prompt);
     const responseData = JSON.parse(result.response.text());
@@ -219,6 +224,7 @@ Data:\n${itemList}`;
     res.status(500).json({ error: "AI temporarily down" });
   }
 });
+
 
 // ========================================
 // 2. FESTIVAL GROCERY SUGGESTIONS – try best FREE models
