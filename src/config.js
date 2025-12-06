@@ -7,28 +7,26 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET || 'dev_jwt_secret',
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
 
+  // Keep Old AI_KEY because some files still import it
+  aiKey: process.env.AI_KEY || null,
 
-
-  // ⭐ NEW NAME FOR GEMINI KEY
+  // Gemini key
   geminiKey: process.env.GEMINI_API_KEY_ALERTS,
 
-  // Calendar Alerts Key
+  // Calendar keys
   calendarAlertsKey: process.env.CALENDAR_ALERTS_API_KEY,
-
-  // Calendarific Key
   calendarificKey: process.env.CALENDARIFIC_API_KEY,
 };
 
-// Validate required env
+// Validations
 if (!config.mongoUri) throw new Error('Missing MONGO_URI');
 
-// Gemini key optional warning
 if (!config.geminiKey) {
   console.warn("⚠️ Missing GEMINI_API_KEY_ALERTS (needed for Gemini suggestions)");
 }
 
-
-export const GEMINI_KEY = config.geminiKey;    // New Gemini key
+export const AI_KEY = config.aiKey;          // ← RESTORED
+export const GEMINI_KEY = config.geminiKey;
 export const CALENDARIFIC_API_KEY = config.calendarificKey;
 
 console.log('Config loaded successfully');
