@@ -137,11 +137,11 @@ router.post('/suggestions', async (req, res) => {
 Data:\n${itemList}`;
 
     // CALL GEMINI
-    const genAI = new GoogleGenerativeAI(GEMINI_KEY);
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
-      generationConfig: { responseMimeType: "application/json" }
-    });
+   const model = genAI.getGenerativeModel({
+  model: "gemini-1.5-flash-latest",
+  generationConfig: { responseMimeType: "application/json" }
+});
+
 
     const result = await model.generateContent(prompt);
     const responseData = JSON.parse(result.response.text());
