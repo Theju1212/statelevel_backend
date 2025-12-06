@@ -4,16 +4,14 @@ import axios from 'axios';
 import Item from '../models/Item.js';
 import Sale from '../models/Sale.js';
 import mongoose from 'mongoose';
-import {  GEMINI_KEY } from '../config.js';  // ⭐ IMPORTANT FIX
+import { AI_KEY, GEMINI_KEY } from '../config.js';   // ⭐ Gemini key kept (unused)
 
-
-import { GoogleGenerativeAI } from "@google/generative-ai";
-
+import { GoogleGenerativeAI } from "@google/generative-ai"; // kept for show-off only
 
 const router = express.Router();
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-// small helper for exponential backoff sleeps
+// Helper sleep
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 
 // normalize item name for matching
@@ -23,198 +21,198 @@ const normalize = (s = '') => String(s).trim().toLowerCase();
 async function callOpenRouter(payload, maxRetries = 2, initialDelay = 800) {
   let attempt = 0;
   let delay = initialDelay;
+
   while (attempt <= maxRetries) {
     try {
       const resp = await axios.post(OPENROUTER_API_URL, payload, {
         headers: {
           Authorization: `Bearer ${AI_KEY}`,
           "Content-Type": "application/json",
-          "HTTP-Referer": "http://localhost:3000",
+          "HTTP-Referer": "https://statelevel.vercel.app",
           "X-Title": "AI Mart Inventory"
         },
         timeout: 60000
       });
+
       return resp.data;
+
     } catch (err) {
       attempt++;
       const status = err.response?.status;
       console.warn(`OpenRouter attempt ${attempt} failed:`, status || err.message);
-      // retry on 429 or 5xx or network errors
+
       if (attempt > maxRetries || (status && status < 500 && status !== 429)) {
         throw err;
       }
+
       await sleep(delay);
       delay *= 2;
     }
   }
+
   throw new Error('OpenRouter retries exhausted');
 }
 
 // ========================================
-// 1. LOW STOCK + EXPIRY + VELOCITY SUGGESTIONS (JSON-FORCED)
-// ========================================
-// ========================================
-// 1. LOW STOCK + EXPIRY + VELOCITY SUGGESTIONS (JSON-FORCED)
+// 1. LOW STOCK + EXPIRY + VELOCITY SUGGESTIONS
 // ========================================
 router.post('/suggestions', async (req, res) => {
+  console.log("📌 Suggestions endpoint hit");
+  console.log("AI_KEY loaded:", !!AI_KEY);
+  console.log("GEMINI_KEY loaded (show-off):", !!GEMINI_KEY);
+
   try {
     const { userDiscountConfig } = req.body;
     const storeId = req.storeId;
 
-    if (!storeId) return res.status(401).json({ error: 'Unauthorized - No store ID' });
-
-    // CHECK GEMINI KEY
-    if (!GEMINI_KEY) {
-      console.error("❌ GEMINI_KEY missing!");
-      return res.status(500).json({ error: "Gemini API key not configured" });
-    }
+    if (!storeId) return res.status(400).json({ error: 'Store ID missing' });
+    if (!AI_KEY) return res.status(500).json({ error: 'AI key missing' });
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // FETCH ITEMS
     const items = await Item.find({
       storeId: new mongoose.Types.ObjectId(storeId)
     }).lean();
 
-    // FETCH LAST 30 DAYS SALES
+    // last 30 days sales
     const thirtyDaysAgo = new Date(today);
     thirtyDaysAgo.setDate(today.getDate() - 30);
 
     const sales = await Sale.find({
       storeId: new mongoose.Types.ObjectId(storeId),
       createdAt: { $gte: thirtyDaysAgo }
-    }).populate('itemId', 'name rackStock threshold expiryDate').lean();
+    }).populate("itemId", "name rackStock threshold expiryDate").lean();
 
     const validSales = sales.filter(s => s.itemId && s.itemId._id);
 
-    // BUILD ALERTS DATA
     const alertsData = items.map(item => {
       const alerts = [];
 
-      if ((item.rackStock ?? 0) <= (item.threshold ?? 0))
-        alerts.push('LOW_STOCK');
+      if ((item.rackStock ?? 0) <= (item.threshold ?? 0)) alerts.push("LOW_STOCK");
 
       if (item.expiryDate) {
         const expiry = new Date(item.expiryDate);
         const diffDays = Math.floor((expiry - today) / 86400000);
-        if (diffDays < 0) alerts.push('EXPIRED');
-        else if (diffDays <= 3) alerts.push('EXPIRING_SOON');
+
+        if (diffDays < 0) alerts.push("EXPIRED");
+        else if (diffDays <= 3) alerts.push("EXPIRING_SOON");
       }
 
-      const itemSales = validSales.filter(
-        s => s.itemId._id.toString() === item._id.toString()
-      );
-
+      const itemSales = validSales.filter(s => s.itemId._id.toString() === item._id.toString());
       const salesVelocity = itemSales.length / 30;
+      const totalSales = itemSales.reduce((sum, s) => sum + s.quantity, 0);
 
-      if (salesVelocity < 0.5 && item.rackStock > 0)
-        alerts.push('LOW_VELOCITY');
+      if (salesVelocity < 0.5 && item.rackStock > 0) alerts.push("LOW_VELOCITY");
 
-      return {
-        item,
-        alerts,
-        salesVelocity: salesVelocity.toFixed(2),
-        totalSales: itemSales.reduce((a, s) => a + s.quantity, 0)
-      };
+      return { item, alerts, salesVelocity: salesVelocity.toFixed(2), totalSales };
     }).filter(d => d.alerts.length > 0);
 
     if (alertsData.length === 0) {
       return res.json({
         alerts: [],
         discountSuggestions: [],
-        insights: "All good!"
+        insights: "Everything looks perfect — no stock issues found."
       });
     }
 
-    // BUILD PROMPT FOR GEMINI
     const itemList = alertsData.map(d =>
       `Item: ${d.item.name} | Stock: ${d.item.rackStock}/${d.item.threshold} | Alerts: ${d.alerts.join(', ')}`
-    ).join('\n');
+    ).join("\n");
 
-    const prompt = `You are a kirana store AI. Return ONLY valid JSON:
+    const prompt = `
+You are an inventory AI. Return ONLY JSON.
+
 {
-  "discountSuggestions": [{"itemName":"Oil","suggestedPercent":20,"applyQty":3,"reason":"Expiring"}],
-  "insights":"Short analysis"
+  "discountSuggestions":[
+    {"itemName":"Oil","suggestedPercent":20,"applyQty":3,"reason":"Expiring soon"}
+  ],
+  "insights":"Very short analysis"
 }
-Data:\n${itemList}`;
 
-    // ⭐⭐⭐ CREATE genAI INSTANCE (you removed this accidentally)
-   const genAI = new GoogleGenerativeAI(GEMINI_KEY);
+Data:
+${itemList}
+`.trim();
 
-const model = genAI.getGenerativeModel({
-  model: "gemini-1.5-flash-8b",   // ← FREE MODEL (works in v1beta)
-  generationConfig: { 
-    responseMimeType: "application/json" 
-  }
-});
+    // Payload for OpenRouter
+    const payload = {
+      model: "nvidia/nemotron-nano-9b-v2:free",
+      messages: [
+        { role: "system", content: "Return ONLY JSON." },
+        { role: "user", content: prompt }
+      ],
+      temperature: 0.05,
+      max_tokens: 700,
+      response_format: { type: "json_object" }
+    };
 
-const result = await model.generateContent(prompt);
-const responseData = JSON.parse(result.response.text());
+    // Call OpenRouter normally
+    let responseData;
+    try {
+      responseData = await callOpenRouter(payload);
+    } catch {
+      console.warn("Primary OpenRouter failed. Trying fallback.");
 
+      const fb = { ...payload };
+      delete fb.response_format;
 
-    // MAP DISCOUNT SUGGESTIONS
-    const discountSuggestions = (responseData.discountSuggestions || []).map(d => {
-      const match = alertsData.find(
-        data => normalize(data.item.name) === normalize(d.itemName)
-      );
+      responseData = await callOpenRouter(fb);
+    }
+
+    const raw = responseData?.choices?.[0]?.message?.content ?? "{}";
+    let aiJson;
+
+    try {
+      if (responseData?.choices?.[0]?.message?.content_object) {
+        aiJson = responseData.choices[0].message.content_object;
+      } else {
+        aiJson = JSON.parse(raw);
+      }
+    } catch {
+      aiJson = { discountSuggestions: [], insights: "AI returned malformed output." };
+    }
+
+    const discountSuggestions = (aiJson.discountSuggestions || []).map(d => {
+      const match = alertsData.find(dat => normalize(dat.item.name) === normalize(d.itemName));
       if (!match) return null;
 
       const item = match.item;
-
       return {
         itemId: item._id,
         itemName: item.name,
-        rackStock: item.rackStock ?? 0,
-        threshold: item.threshold ?? 0,
-        daysToExpiry: item.expiryDate
-          ? Math.floor((new Date(item.expiryDate) - today) / 86400000)
-          : null,
-        salesVelocity: match.salesVelocity,
-        totalSales: match.totalSales,
-        suggestedPercent: Math.min(
-          Math.max(
-            0,
-            d.suggestedPercent ?? userDiscountConfig?.defaultDiscount ?? 10
-          ),
-          userDiscountConfig?.maxDiscount ?? 50
-        ),
-        applyQty: Math.max(0, Math.min(d.applyQty ?? 0, item.rackStock ?? 0)),
-        reason: d.reason || "AI recommendation"
+        rackStock: item.rackStock,
+        threshold: item.threshold,
+        suggestedPercent: d.suggestedPercent,
+        applyQty: d.applyQty,
+        reason: d.reason
       };
     }).filter(Boolean);
 
-    // BUILD ALERT MESSAGES
     const alerts = alertsData.map(d => {
       const item = d.item;
-      const messages = [];
+      const msgs = [];
 
-      if (d.alerts.includes('LOW_STOCK'))
-        messages.push(`${item.name}: Low stock (${item.rackStock}/${item.threshold})`);
+      if (d.alerts.includes("LOW_STOCK"))
+        msgs.push(`${item.name}: Low stock (${item.rackStock}/${item.threshold})`);
 
-      if (d.alerts.includes('EXPIRED'))
-        messages.push(`${item.name}: EXPIRED!`);
+      if (d.alerts.includes("EXPIRED"))
+        msgs.push(`${item.name}: EXPIRED`);
 
-      if (d.alerts.includes('EXPIRING_SOON')) {
+      if (d.alerts.includes("EXPIRING_SOON")) {
         const days = Math.floor((new Date(item.expiryDate) - today) / 86400000);
-        messages.push(`${item.name}: Expiring in ${days} days`);
+        msgs.push(`${item.name}: Expiring in ${days} days`);
       }
 
-      if (d.alerts.includes('LOW_VELOCITY'))
-        messages.push(`${item.name}: Slow sales (${d.salesVelocity}/day)`);
+      if (d.alerts.includes("LOW_VELOCITY"))
+        msgs.push(`${item.name}: Slow sales (${d.salesVelocity}/day)`);
 
-      return {
-        itemName: item.name,
-        message: messages.join('; '),
-        itemId: item._id
-      };
+      return { itemName: item.name, message: msgs.join("; "), itemId: item._id };
     });
 
-    // FINAL RESPONSE
     res.json({
       alerts,
       discountSuggestions,
-      insights: responseData.insights || "Analyzing...",
+      insights: aiJson.insights || "AI analyzing inventory patterns.",
       summary: {
         totalItems: items.length,
         alertsCount: alertsData.length
@@ -222,10 +220,11 @@ const responseData = JSON.parse(result.response.text());
     });
 
   } catch (err) {
-    console.error("Gemini error:", err.message);
-    res.status(500).json({ error: "AI temporarily down" });
+    console.error("AI /suggestions error:", err.message);
+    res.status(500).json({ error: "AI failed" });
   }
 });
+
 
 
 // ========================================
