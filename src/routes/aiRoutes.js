@@ -140,16 +140,18 @@ router.post('/suggestions', async (req, res) => {
 Data:\n${itemList}`;
 
     // ⭐⭐⭐ CREATE genAI INSTANCE (you removed this accidentally)
-    const genAI = new GoogleGenerativeAI(GEMINI_KEY);
+   const genAI = new GoogleGenerativeAI(GEMINI_KEY);
 
-    // ⭐ FIXED MODEL NAME
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash-latest",
-      generationConfig: { responseMimeType: "application/json" }
-    });
+const model = genAI.getGenerativeModel({
+  model: "gemini-1.5-flash-8b",   // ← FREE MODEL (works in v1beta)
+  generationConfig: { 
+    responseMimeType: "application/json" 
+  }
+});
 
-    const result = await model.generateContent(prompt);
-    const responseData = JSON.parse(result.response.text());
+const result = await model.generateContent(prompt);
+const responseData = JSON.parse(result.response.text());
+
 
     // MAP DISCOUNT SUGGESTIONS
     const discountSuggestions = (responseData.discountSuggestions || []).map(d => {
