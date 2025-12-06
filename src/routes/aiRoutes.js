@@ -4,7 +4,7 @@ import axios from 'axios';
 import Item from '../models/Item.js';
 import Sale from '../models/Sale.js';
 import mongoose from 'mongoose';
-import { AI_KEY, GEMINI_KEY } from '../config.js';  // ⭐ IMPORTANT FIX
+import {  GEMINI_KEY } from '../config.js';  // ⭐ IMPORTANT FIX
 
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
