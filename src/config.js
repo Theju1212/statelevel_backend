@@ -7,8 +7,7 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET || 'dev_jwt_secret',
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
 
-  // Old OpenRouter key
-  aiKey: process.env.AI_KEY,
+
 
   // ⭐ NEW NAME FOR GEMINI KEY
   geminiKey: process.env.GEMINI_API_KEY_ALERTS,
@@ -28,7 +27,7 @@ if (!config.geminiKey) {
   console.warn("⚠️ Missing GEMINI_API_KEY_ALERTS (needed for Gemini suggestions)");
 }
 
-export const AI_KEY = config.aiKey;            // Existing AI key (OpenRouter)
+
 export const GEMINI_KEY = config.geminiKey;    // New Gemini key
 export const CALENDARIFIC_API_KEY = config.calendarificKey;
 

@@ -53,30 +53,31 @@ async function callOpenRouter(payload, maxRetries = 2, initialDelay = 800) {
 // ========================================
 // 1. LOW STOCK + EXPIRY + VELOCITY SUGGESTIONS (JSON-FORCED)
 // ========================================
-// ========================================
-// 1. LOW STOCK + EXPIRY + VELOCITY SUGGESTIONS (JSON-FORCED)
-// ========================================
 router.post('/suggestions', async (req, res) => {
-  console.log("REQUEST BODY:", req.body);
-  console.log("STORE ID FROM JWT:", req.storeId);
-  console.log("AI_KEY LOADED:", !!AI_KEY);
-
   try {
     const { userDiscountConfig } = req.body;
     const storeId = req.storeId;
-    if (!storeId) return res.status(400).json({ error: 'Store ID missing' });
+
+    if (!storeId) return res.status(401).json({ error: 'Unauthorized - No store ID' });
+
+    // CHECK GEMINI KEY
+    if (!GEMINI_KEY) {
+      console.error("❌ GEMINI_KEY missing!");
+      return res.status(500).json({ error: "Gemini API key not configured" });
+    }
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // 1. Fetch ALL items
+    // FETCH ITEMS
     const items = await Item.find({
       storeId: new mongoose.Types.ObjectId(storeId)
     }).lean();
 
-    // 2. Fetch recent sales (last 30 days)
+    // FETCH LAST 30 DAYS SALES
     const thirtyDaysAgo = new Date(today);
     thirtyDaysAgo.setDate(today.getDate() - 30);
+
     const sales = await Sale.find({
       storeId: new mongoose.Types.ObjectId(storeId),
       createdAt: { $gte: thirtyDaysAgo }
@@ -84,117 +85,91 @@ router.post('/suggestions', async (req, res) => {
 
     const validSales = sales.filter(s => s.itemId && s.itemId._id);
 
-    // 3. Calculate alerts
+    // BUILD ALERTS DATA
     const alertsData = items.map(item => {
       const alerts = [];
 
-      if ((item.rackStock ?? 0) <= (item.threshold ?? 0)) {
+      if ((item.rackStock ?? 0) <= (item.threshold ?? 0))
         alerts.push('LOW_STOCK');
-      }
 
       if (item.expiryDate) {
         const expiry = new Date(item.expiryDate);
-        if (!isNaN(expiry)) {
-          const diffDays = Math.floor((expiry - today) / 86400000);
-          if (diffDays < 0) alerts.push('EXPIRED');
-          else if (diffDays <= 3) alerts.push('EXPIRING_SOON');
-        }
+        const diffDays = Math.floor((expiry - today) / 86400000);
+        if (diffDays < 0) alerts.push('EXPIRED');
+        else if (diffDays <= 3) alerts.push('EXPIRING_SOON');
       }
 
-      const itemSales = validSales.filter(s =>
-        s.itemId._id.toString() === item._id.toString()
+      const itemSales = validSales.filter(
+        s => s.itemId._id.toString() === item._id.toString()
       );
+
       const salesVelocity = itemSales.length / 30;
-      const totalSales = itemSales.reduce((sum, s) => sum + s.quantity, 0);
 
-      if (salesVelocity < 0.5 && item.rackStock > 0) {
+      if (salesVelocity < 0.5 && item.rackStock > 0)
         alerts.push('LOW_VELOCITY');
-      }
 
-      return { item, alerts, salesVelocity: salesVelocity.toFixed(2), totalSales };
+      return {
+        item,
+        alerts,
+        salesVelocity: salesVelocity.toFixed(2),
+        totalSales: itemSales.reduce((a, s) => a + s.quantity, 0)
+      };
     }).filter(d => d.alerts.length > 0);
 
     if (alertsData.length === 0) {
       return res.json({
         alerts: [],
         discountSuggestions: [],
-        insights: "No alerts: All stock levels good, no expiring items, healthy sales."
+        insights: "All good!"
       });
     }
 
-    // 4. Prepare AI prompt (compact, clear)
-    const itemList = alertsData.map(d => {
-      return `Item: ${d.item.name} | Stock: ${d.item.rackStock}/${d.item.threshold} | Alerts: ${d.alerts.join(', ')} | SalesPerDay: ${d.salesVelocity} | SoldTotal: ${d.totalSales}`;
-    }).join('\n');
+    // BUILD PROMPT FOR GEMINI
+    const itemList = alertsData.map(d =>
+      `Item: ${d.item.name} | Stock: ${d.item.rackStock}/${d.item.threshold} | Alerts: ${d.alerts.join(', ')}`
+    ).join('\n');
 
-    const prompt = `
-You are a retail-inventory AI. Return ONLY valid JSON, no markdown or extra text.
-
+    const prompt = `You are a kirana store AI. Return ONLY valid JSON:
 {
-  "discountSuggestions": [
-    {"itemName":"Aata","suggestedPercent":15,"applyQty":5,"reason":"Low stock"}
-  ],
-  "insights":"2-sentence analysis"
+  "discountSuggestions": [{"itemName":"Oil","suggestedPercent":20,"applyQty":3,"reason":"Expiring"}],
+  "insights":"Short analysis"
 }
+Data:\n${itemList}`;
 
-Data:
-${itemList}
+    // CALL GEMINI
+    const genAI = new GoogleGenerativeAI(GEMINI_KEY);
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      generationConfig: { responseMimeType: "application/json" }
+    });
 
-Max discount: ${userDiscountConfig?.maxDiscount || 50}%
-`.trim();
+    const result = await model.generateContent(prompt);
+    const responseData = JSON.parse(result.response.text());
 
-    if (!AI_KEY) return res.status(500).json({ error: "AI key missing" });
-
-    // ===============================================================
-    // ⭐⭐ CHANGED BLOCK — SWITCH TO GOOGLE GEMINI OFFICIAL API ⭐⭐
-    // ===============================================================
-
-  // ⭐ USE GEMINI_KEY IMPORTED FROM CONFIG
-const genAI = new GoogleGenerativeAI(GEMINI_KEY);
-
-const model = genAI.getGenerativeModel({
-  model: "gemini-1.5-flash",
-  generationConfig: {
-    responseMimeType: "application/json"
-  }
-});
-
-const result = await model.generateContent(prompt);
-
-let responseData;
-try {
-  responseData = JSON.parse(result.response.text());
-} catch (e) {
-  console.error("Gemini JSON parse error:", e);
-  return res.status(500).json({
-    error: "Gemini returned invalid JSON",
-    raw: result.response.text()
-  });
-}
-
-    // ===============================================================
-    // ❗ REMOVED OpenRouter, callOpenRouter, fallback logic
-    // Everything else continues 100% same
-    // ===============================================================
-
-    // 5. Map AI suggestions to real items
+    // MAP DISCOUNT SUGGESTIONS
     const discountSuggestions = (responseData.discountSuggestions || []).map(d => {
-      const match = alertsData.find(data =>
-        normalize(data.item.name) === normalize(d.itemName)
+      const match = alertsData.find(
+        data => normalize(data.item.name) === normalize(d.itemName)
       );
       if (!match) return null;
 
       const item = match.item;
+
       return {
         itemId: item._id,
         itemName: item.name,
         rackStock: item.rackStock ?? 0,
         threshold: item.threshold ?? 0,
-        daysToExpiry: item.expiryDate ? Math.floor((new Date(item.expiryDate) - today) / 86400000) : null,
+        daysToExpiry: item.expiryDate
+          ? Math.floor((new Date(item.expiryDate) - today) / 86400000)
+          : null,
         salesVelocity: match.salesVelocity,
         totalSales: match.totalSales,
         suggestedPercent: Math.min(
-          Math.max(0, d.suggestedPercent ?? userDiscountConfig?.defaultDiscount ?? 10),
+          Math.max(
+            0,
+            d.suggestedPercent ?? userDiscountConfig?.defaultDiscount ?? 10
+          ),
           userDiscountConfig?.maxDiscount ?? 50
         ),
         applyQty: Math.max(0, Math.min(d.applyQty ?? 0, item.rackStock ?? 0)),
@@ -202,35 +177,46 @@ try {
       };
     }).filter(Boolean);
 
-    // 6. Generate alerts
+    // BUILD ALERT MESSAGES
     const alerts = alertsData.map(d => {
       const item = d.item;
       const messages = [];
-      if (d.alerts.includes('LOW_STOCK')) messages.push(`${item.name}: Low stock (${item.rackStock}/${item.threshold})`);
-      if (d.alerts.includes('EXPIRED')) messages.push(`${item.name}: EXPIRED!`);
+
+      if (d.alerts.includes('LOW_STOCK'))
+        messages.push(`${item.name}: Low stock (${item.rackStock}/${item.threshold})`);
+
+      if (d.alerts.includes('EXPIRED'))
+        messages.push(`${item.name}: EXPIRED!`);
+
       if (d.alerts.includes('EXPIRING_SOON')) {
         const days = Math.floor((new Date(item.expiryDate) - today) / 86400000);
         messages.push(`${item.name}: Expiring in ${days} days`);
       }
-      if (d.alerts.includes('LOW_VELOCITY')) messages.push(`${item.name}: Slow sales (${d.salesVelocity}/day)`);
-      return { itemName: item.name, message: messages.join('; '), itemId: item._id };
+
+      if (d.alerts.includes('LOW_VELOCITY'))
+        messages.push(`${item.name}: Slow sales (${d.salesVelocity}/day)`);
+
+      return {
+        itemName: item.name,
+        message: messages.join('; '),
+        itemId: item._id
+      };
     });
 
+    // FINAL RESPONSE
     res.json({
       alerts,
       discountSuggestions,
-      insights: responseData.insights || "Analyzing your inventory...",
+      insights: responseData.insights || "Analyzing...",
       summary: {
         totalItems: items.length,
-        alertsCount: alertsData.length,
-        lowStock: alertsData.filter(d => d.alerts.includes('LOW_STOCK')).length,
-        expiring: alertsData.filter(d => d.alerts.includes('EXPIRED') || d.alerts.includes('EXPIRING_SOON')).length
+        alertsCount: alertsData.length
       }
     });
 
   } catch (err) {
-    console.error("AI /suggestions error:", err.response?.data || err.message);
-    res.status(500).json({ error: "AI processing failed" });
+    console.error("Gemini error:", err.message);
+    res.status(500).json({ error: "AI temporarily down" });
   }
 });
 
